@@ -1,0 +1,66 @@
+name: Build and Run Blutter
+
+on:
+  workflow_dispatch:
+    inputs:
+      apk_name:
+        description: Nama file APK di folder input, kosongkan untuk memilih APK pertama
+        required: false
+        default: ""
+        type: string
+      extra_args:
+        description: Argumen tambahan untuk blutter.py
+        required: false
+        default: ""
+        type: string
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select APK
+        id: apk
+        env:
+          APK_NAME: ${{ inputs.apk_name }}
+        run: |
+          if [ -n "$APK_NAME" ]; then
+            APK_PATH="input/$APK_NAME"
+          else
+            APK_PATH="$(find input -maxdepth 1 -type f -iname '*.apk' -print -quit)"
+          fi
+          if [ -z "$APK_PATH" ] || [ ! -f "$APK_PATH" ]; then
+            echo "APK tidak ditemukan di folder input"
+            exit 1
+          fi
+          echo "path=$APK_PATH" >> "$GITHUB_OUTPUT"
+          echo "Menggunakan $APK_PATH"
+
+      - name: Build image
+        run: docker build -t blutter-runner .
+
+      - name: Analyze APK
+        env:
+          APK_PATH: ${{ steps.apk.outputs.path }}
+          EXTRA_ARGS: ${{ inputs.extra_args }}
+        run: |
+          mkdir -p output
+          read -r -a ARGS <<< "$EXTRA_ARGS"
+          docker run --rm \
+            -v "$PWD/input:/input:ro" \
+            -v "$PWD/output:/output" \
+            blutter-runner "/$APK_PATH" /output "${ARGS[@]}"
+
+      - name: Upload result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blutter-output
+          path: output
+          if-no-files-found: warn
+          retention-days: 7
